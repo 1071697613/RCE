@@ -1,24 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Export generator="Cache" version="25">
 <Class name="RCE.Tests">
-<Super>%RegisteredObject</Super>
+<Description>
+Methods for creating test servers, examples.</Description>
+<IncludeCode>%occOptions</IncludeCode>
 <TimeCreated>63474,66517.333827</TimeCreated>
 
 <Method name="TestConnection">
 <Description>
-do ##class(RCE.Tests).TestConnection()</Description>
+Recreate test server and execute TestScript there.
+Deletes all data if refresh = 1 (0 dy default).</Description>
 <ClassMethod>1</ClassMethod>
+<FormalSpec>refresh:%Boolean=0</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
-	do ##class(RCE.Tests).KillExtent()
-	do ##class(RCE.Tests).CreateTestServer()
+	do:(refresh=1) ##class(RCE.Tests).KillExtent()
 	
 	set ip = ^settings("test ip")
+	&sql(DELETE FROM RCE.Machine WHERE IP = :ip)
+	do ##class(RCE.Tests).CreateTestServer()
+	
+	
 	&sql(	SELECT TOP 1 Id INTO :Id 
 			FROM RCE.Instance 
 			WHERE OS->Machine->IP = :ip)
 	set Instance = ##class(RCE.Instance).%OpenId(Id)
-	set st = Instance.ExecuteScript(..CreateTestScriptWindows(),"USER")
+	set st = Instance.ExecuteScript(Instance.OS.CreateTestScript(),"USER")
 	if $$$ISERR(st) { w $System.Status.GetErrorText(st),! } else { w "Success execute",!}
 	
 	return st
@@ -27,7 +34,7 @@ do ##class(RCE.Tests).TestConnection()</Description>
 
 <Method name="KillExtent">
 <Description>
-do ##class(RCE.Tests).KillExtent()</Description>
+Kill everything.</Description>
 <ClassMethod>1</ClassMethod>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
@@ -40,7 +47,7 @@ do ##class(RCE.Tests).KillExtent()</Description>
 
 <Method name="CreateTestServer">
 <Description>
-do ##class(RCE.Tests).CreateTestServer()</Description>
+Creates test server.</Description>
 <ClassMethod>1</ClassMethod>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
@@ -59,6 +66,7 @@ do ##class(RCE.Tests).CreateTestServer()</Description>
 	set Instance.Security = ^settings("test cache security")
 	set Instance.User = $g(^settings("test cache user"))
 	set Instance.Pass = $g(^settings("test cache password"))
+	set Instance.Dir = $g(^settings("test cache dir"))
 	
 	set Instance.OS = OS
 	set OS.Machine = Machine
@@ -67,32 +75,64 @@ do ##class(RCE.Tests).CreateTestServer()</Description>
 ]]></Implementation>
 </Method>
 
-<Method name="CreateTestScript">
+<Method name="CreateTestServerMinimal">
+<Description>
+This method demonstrates minimal amount of settings to connect to server. </Description>
 <ClassMethod>1</ClassMethod>
-<ReturnType>RCE.Script</ReturnType>
+<ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
-	set script = ##class(RCE.Script).%New()
-	do script.Insert(##class(RCE.Command).%New("touch 123",0))
-	do script.Insert(##class(RCE.Command).%New("set ^test=1",1))
-	do script.Insert(##class(RCE.Command).%New("set ^test(1)=2",1))
-	do script.Insert(##class(RCE.Command).%New("touch 1234",0))
-	do script.%Save()
-	return script
+	set Machine = ##class(RCE.Machine).%New()
+	set Machine.IP = ^settings("test ip")
+	
+	set OS = ##class(RCE.OS).%New(^settings("test osname"))
+	set OS.Username = ^settings("test username")
+	set OS.Password = ^settings("test password")
+
+	set Instance = ##class(RCE.Instance).%New()
+	set Instance.Name = ^settings("test cache name") 
+	set Instance.User = $g(^settings("test cache user")) // may be unrequired
+	set Instance.Pass = $g(^settings("test cache password")) // may be unrequired
+	set Instance.Dir = $g(^settings("test cache dir")) // required if cterm is not in PATH (windows)
+	
+	set Instance.OS = OS
+	set OS.Machine = Machine
+	
+	return Machine.%Save()
 ]]></Implementation>
 </Method>
 
-<Method name="CreateTestScriptWindows">
+<Method name="CreateLocalServer">
+<Description>
+Creates Machine, OS, Instance entry from current instance</Description>
 <ClassMethod>1</ClassMethod>
-<ReturnType>RCE.Script</ReturnType>
+<FormalSpec>OSUser:%String,OSPassword:%String,InstanceUser:%String,InstancePassword:%String</FormalSpec>
+<ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
-	set script = ##class(RCE.Script).%New()
-	do script.Insert(##class(RCE.Command).%New("cd \",0))
-	do script.Insert(##class(RCE.Command).%New("echo start  %date% - %time% >> date.txt",0))
-	do script.Insert(##class(RCE.Command).%New("set ^test=1",1))
-	do script.Insert(##class(RCE.Command).%New("set ^test(1)=2",1))
-	do script.Insert(##class(RCE.Command).%New("echo end %date% - %time% >> date.txt",0))
-	do script.%Save()
-	return script
+	set Machine = ##class(RCE.Machine).%New()
+	set Machine.Description = "local server " _ ##class(%SYSTEM.INetInfo).LocalHostName()
+	set Machine.IP = "127.0.0.1"
+	
+	set OS = ##class(RCE.OS).%New($system.Version.GetOS())
+	set OS.Username = OSUser
+	set OS.Password = OSPassword
+	set OS.Bit = $case($system.Version.Is64Bits(),1:"x64",0:"x86",:"")
+	
+	set Instance = ##class(RCE.Instance).%New()
+	set Instance.Name = ##class(%SYS.System).GetInstanceName()
+	set Instance.Version = $system.Version.GetNumber()
+	set Instance.Dir = $System.Util.InstallDirectory()
+	
+	do ##class(Security.System).GetInstallationSecuritySetting(.security)
+	set Instance.Security = $case(security,"None":"Minimal",:security)
+	
+	if (security'="None") {
+		set Instance.User = InstanceUser
+		set Instance.Pass = InstancePassword
+	}
+	set Instance.OS = OS
+	set OS.Machine = Machine
+	
+	return Machine.%Save()
 ]]></Implementation>
 </Method>
 </Class>
